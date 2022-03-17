@@ -1,0 +1,10 @@
+[package]
+name = "postmaster"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = { version = ">=3.1.6", features = ["derive", "cargo", "color", "suggestions"]
+rust-htslib = { git = "https://github.com/rust-bio/rust-htslib", rev="9e01563", default-features = false }
