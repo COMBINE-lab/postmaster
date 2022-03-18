@@ -2,8 +2,9 @@ use anyhow::anyhow;
 use anyhow::{Context, Result};
 use clap::Parser;
 use csv::ReaderBuilder;
-use rust_htslib::{bam, bam::Format, bam::Read, bam::Record, bam::record::Aux, bam::Writer};
+use rust_htslib::{bam, bam::record::Aux, bam::Format, bam::Read, bam::Record, bam::Writer};
 use seine::salmon::QuantRecord;
+use std::cmp;
 use std::error::Error;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -23,6 +24,10 @@ struct Args {
     // Output path of modified alignments
     #[clap(short, long)]
     output: String,
+
+    // Number of threads to use
+    #[clap(short, long, default_value = "2")]
+    num_threads: usize,
 }
 
 fn read_quants<P: AsRef<Path>>(p: P) -> Result<Vec<QuantRecord>, csv::Error> {
@@ -41,19 +46,20 @@ fn read_quants<P: AsRef<Path>>(p: P) -> Result<Vec<QuantRecord>, csv::Error> {
 }
 
 fn process_alignment_group(alns: &mut Vec<Record>, quants: &Vec<QuantRecord>, writer: &mut Writer) {
-
     let mut tot_tpm = 0.0;
     let mut ait = alns.iter();
 
     while let Some(a) = ait.next() {
         tot_tpm += quants[a.tid() as usize].tpm;
-        if (a.is_paired()) { ait.next(); }
+        if (a.is_paired()) {
+            ait.next();
+        }
     }
 
     let mut a_mit = alns.iter_mut();
     while let Some(a) = a_mit.next() {
         let pp = quants[a.tid() as usize].tpm / tot_tpm;
-        
+
         if let Ok(mut value) = a.aux(b"ZW") {
             value = Aux::Float(pp as f32);
         } else {
@@ -64,11 +70,17 @@ fn process_alignment_group(alns: &mut Vec<Record>, quants: &Vec<QuantRecord>, wr
 }
 
 fn assign_posterior_probabilities(args: &Args) -> Result<()> {
+    let read_threads: usize = cmp::min(2usize, &args.num_threads / 2);
+    let write_threads: usize = cmp::max(1usize, &args.num_threads - read_threads);
+    let tot_threads = read_threads + write_threads;
+
     let mut bam = bam::Reader::from_path(&args.alignments)
         .with_context(|| format!("failed to open SAM/BAM file {}", &args.alignments))?;
+    bam.set_threads(read_threads);
 
     let header = bam::Header::from_template(bam.header());
     let mut writer = Writer::from_path(&args.output, &header, Format::Sam).unwrap();
+    writer.set_threads(write_threads);
 
     if let Ok(quant_vec) = read_quants(&args.quant) {
         let hhm = header.to_hashmap();
@@ -105,7 +117,7 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
                     if (&curr_qname[..] != record.qname()) {
                         let prev_name = String::from_utf8(curr_qname).unwrap();
                         curr_qname = record.qname().to_vec();
-                        // if this wasn't the first read then 
+                        // if this wasn't the first read then
                         // process the alignments for the previous
                         // read.
                         if !first {
@@ -128,7 +140,7 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
             }
         }
         if rvec.len() > 0 {
-            process_alignment_group(&mut rvec, &quant_vec, &mut writer); 
+            process_alignment_group(&mut rvec, &quant_vec, &mut writer);
         }
     }
     Ok(())
