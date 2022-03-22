@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use anyhow::{Context, Result};
 use clap::Parser;
 use csv::ReaderBuilder;
-use rust_htslib::{bam, bam::record::Aux, bam::Format, bam::Read, bam::Record, bam::Writer};
+use rust_htslib::{bam, bam::record::Aux, bam::{Format, Read, Record, Writer}};
 use seine::salmon::QuantRecord;
 use std::cmp;
 use std::fs::File;
