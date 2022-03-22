@@ -5,9 +5,8 @@ use csv::ReaderBuilder;
 use rust_htslib::{bam, bam::record::Aux, bam::Format, bam::Read, bam::Record, bam::Writer};
 use seine::salmon::QuantRecord;
 use std::cmp;
-use std::error::Error;
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::{Path};
 use std::vec::Vec;
 
 #[derive(Parser, Debug)]
@@ -15,7 +14,7 @@ use std::vec::Vec;
 struct Args {
     // Path to the SAM/BAM file whose alignments will be annotated
     #[clap(short, long)]
-    alignments: String,
+    alignments: Option<String>,
 
     // Path to the salmon quantification file
     #[clap(short, long)]
@@ -23,7 +22,7 @@ struct Args {
 
     // Output path of modified alignments
     #[clap(short, long)]
-    output: String,
+    output: Option<String>,
 
     // Number of threads to use
     #[clap(short, long, default_value = "2")]
@@ -91,18 +90,43 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
     } else {
         1
     };
-    let tot_threads = read_threads + write_threads;
+    let _tot_threads = read_threads + write_threads;
 
     // open the input alignment file and set the number of reading threads
-    let mut bam = bam::Reader::from_path(&args.alignments)
-        .with_context(|| format!("failed to open SAM/BAM file {}", &args.alignments))?;
+    let mut bam: bam::Reader = match &args.alignments {
+        None => {
+            bam::Reader::from_stdin()
+                .with_context(|| format!("failed to open SAM/BAM from STDIN"))?
+        },
+        Some(aln_file) => {
+            bam::Reader::from_path(aln_file)
+                .with_context(|| format!("failed to open SAM/BAM file {}", aln_file))?
+        }
+    };
     bam.set_threads(read_threads);
 
     // we'll need to read the header
     let header = bam::Header::from_template(bam.header());
-    // TODO: select the appropriate format for the output based on the suffix of the
-    // filename provided by the user
-    let mut writer = Writer::from_path(&args.output, &header, Format::Sam).unwrap();
+
+    // if no output option is provided, then the alignments will be written to STDOUT
+    // in *BAM* format.  Otherwise, they will be written in *SAM* or *BAM* based on the
+    // extension of the provided file.
+    let mut writer = match &args.output {
+        None => {
+            // write to stdout
+            Writer::from_stdout(&header, Format::Bam).unwrap()
+        },
+        Some(outname) => {
+            if outname.ends_with(".bam") {
+                Writer::from_path(&outname, &header, Format::Bam).unwrap()
+            } else if outname.ends_with(".sam") {
+                Writer::from_path(&outname, &header, Format::Sam).unwrap()
+            } else {
+                panic!("The provided output path was {}, but it must either be stdout (nothing), or end with .bam or .sam", outname)
+            }
+        }
+    };
+
     // set the number of threads we will use for multithreaded writing
     writer.set_threads(write_threads);
 
