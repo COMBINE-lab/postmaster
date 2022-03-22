@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use anyhow::{Context, Result};
 use clap::Parser;
 use csv::ReaderBuilder;
-use rust_htslib::{bam, bam::record::Aux, bam::Format, bam::Read, bam::Record, bam::Writer};
+use rust_htslib::{bam, bam::record::Aux, bam::{Format, Read, Record, Writer}};
 use seine::salmon::QuantRecord;
 use std::cmp;
 use std::fs::File;
@@ -64,7 +64,6 @@ fn process_alignment_group(alns: &mut Vec<Record>, quants: &Vec<QuantRecord>, wr
     }
 
     assert!(tot_tpm > 0.0);
-
     let norm: f64 = 1.0 / tot_tpm;
     // now iterate over the records again, this time
     // computing the posterior probability and writing it
