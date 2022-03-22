@@ -6,7 +6,7 @@ use rust_htslib::{bam, bam::record::Aux, bam::Format, bam::Read, bam::Record, ba
 use seine::salmon::QuantRecord;
 use std::cmp;
 use std::fs::File;
-use std::path::{Path};
+use std::path::Path;
 use std::vec::Vec;
 
 #[derive(Parser, Debug)]
@@ -94,14 +94,10 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
 
     // open the input alignment file and set the number of reading threads
     let mut bam: bam::Reader = match &args.alignments {
-        None => {
-            bam::Reader::from_stdin()
-                .with_context(|| format!("failed to open SAM/BAM from STDIN"))?
-        },
-        Some(aln_file) => {
-            bam::Reader::from_path(aln_file)
-                .with_context(|| format!("failed to open SAM/BAM file {}", aln_file))?
-        }
+        None => bam::Reader::from_stdin()
+            .with_context(|| format!("failed to open SAM/BAM from STDIN"))?,
+        Some(aln_file) => bam::Reader::from_path(aln_file)
+            .with_context(|| format!("failed to open SAM/BAM file {}", aln_file))?,
     };
     bam.set_threads(read_threads);
 
@@ -115,7 +111,7 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
         None => {
             // write to stdout
             Writer::from_stdout(&header, Format::Bam).unwrap()
-        },
+        }
         Some(outname) => {
             if outname.ends_with(".bam") {
                 Writer::from_path(&outname, &header, Format::Bam).unwrap()
