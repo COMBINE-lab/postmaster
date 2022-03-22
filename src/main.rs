@@ -45,21 +45,34 @@ fn read_quants<P: AsRef<Path>>(p: P) -> Result<Vec<QuantRecord>, csv::Error> {
     Ok(quant_vec)
 }
 
+/// Using the quantification values present in `quants`, this function will compute a
+/// posterior assignment probability for each of the alignments in `alns`, it will populate
+/// the "ZW" field of the corresponding SAM/BAM record with this posterior probability estimate
+/// and it will write the resulting (annotated) alignment records using `writer`.
 fn process_alignment_group(alns: &mut Vec<Record>, quants: &Vec<QuantRecord>, writer: &mut Writer) {
+    // tot_tpm will hold the denominator that we will
+    // divide by to properly normalize the posterior probabilities
     let mut tot_tpm = 0.0;
+    // an iterator over our alignment records for this read
     let mut ait = alns.iter();
 
+    // get the TPM for all records for this read
     while let Some(a) = ait.next() {
         tot_tpm += quants[a.tid() as usize].tpm;
-        if (a.is_paired()) {
+        if a.is_paired() {
             ait.next();
         }
     }
 
+    assert!(tot_tpm > 0.0);
+
+    let norm: f64 = 1.0 / tot_tpm;
+    // now iterate over the records again, this time
+    // computing the posterior probability and writing it
+    // to the ZW tag.
     let mut a_mit = alns.iter_mut();
     while let Some(a) = a_mit.next() {
-        let pp = quants[a.tid() as usize].tpm / tot_tpm;
-
+        let pp = quants[a.tid() as usize].tpm * norm;
         if let Ok(mut value) = a.aux(b"ZW") {
             value = Aux::Float(pp as f32);
         } else {
@@ -70,18 +83,30 @@ fn process_alignment_group(alns: &mut Vec<Record>, quants: &Vec<QuantRecord>, wr
 }
 
 fn assign_posterior_probabilities(args: &Args) -> Result<()> {
-    let read_threads: usize = cmp::min(2usize, &args.num_threads / 2);
-    let write_threads: usize = cmp::max(1usize, &args.num_threads - read_threads);
+    // we will require to have at least 2 reading threads
+    // and at least 1 writing thread.
+    let read_threads: usize = cmp::max(2usize, &args.num_threads / 2);
+    let write_threads: usize = if args.num_threads > read_threads {
+        args.num_threads - read_threads
+    } else {
+        1
+    };
     let tot_threads = read_threads + write_threads;
 
+    // open the input alignment file and set the number of reading threads
     let mut bam = bam::Reader::from_path(&args.alignments)
         .with_context(|| format!("failed to open SAM/BAM file {}", &args.alignments))?;
     bam.set_threads(read_threads);
 
+    // we'll need to read the header
     let header = bam::Header::from_template(bam.header());
+    // TODO: select the appropriate format for the output based on the suffix of the
+    // filename provided by the user
     let mut writer = Writer::from_path(&args.output, &header, Format::Sam).unwrap();
+    // set the number of threads we will use for multithreaded writing
     writer.set_threads(write_threads);
 
+    // read the input from the salmon quant.sf file
     if let Ok(quant_vec) = read_quants(&args.quant) {
         let hhm = header.to_hashmap();
         let nquant = quant_vec.len();
@@ -98,23 +123,32 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
             ));
         }
 
+        // we require that every target / record in the quant.sf file has
+        // a corresponding entry in the input SAM/BAM header.  Further, we
+        // currently require that these entries are in the same order.
         for (i, e) in quant_vec.iter().enumerate() {
             let r = &ref_map[i];
             assert_eq!(&e.name, &r["SN"]);
         }
 
+        // Now, we'll process the actual records.
         let mut curr_qname = Vec::<u8>::new();
+        // to minimize unnecessary allocations, we'll store the
+        // alignments for reach read in a vector of records, and
+        // the records will be re-used between reads; growing
+        // as necessary to accommodate reads with more alignments.
         let mut rvec = Vec::<Record>::new();
         let mut rcache = Vec::new();
         let mut record = Record::new();
-        let mut avail_record_ptr = 0;
         let mut first = true;
 
         while let Some(result) = bam.read(&mut record) {
             match result {
                 Ok(_) => {
-                    // starting a new read
-                    if (&curr_qname[..] != record.qname()) {
+                    // if the current read name is different than the previous
+                    // read name, then we are starting to process the alignments
+                    // for a new read.
+                    if &curr_qname[..] != record.qname() {
                         let prev_name = String::from_utf8(curr_qname).unwrap();
                         curr_qname = record.qname().to_vec();
                         // if this wasn't the first read then
@@ -126,10 +160,12 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
                                 rcache.push(rec);
                             }
                         }
-
+                        // this is no longer the first record (that needs to be treated specially).
                         first = false;
                     }
                     rvec.push(record);
+                    // get the next available record to re-use from the cache, or allocate
+                    // a new one if the cache is empty.
                     if let Some(rec) = rcache.pop() {
                         record = rec;
                     } else {
@@ -139,6 +175,8 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
                 Err(_) => panic!("BAM parsing failed..."),
             }
         }
+        // since we don't hit the conditional at the top of the above loop, we need
+        // one more call to deal with the alignments for the last read.
         if rvec.len() > 0 {
             process_alignment_group(&mut rvec, &quant_vec, &mut writer);
         }
@@ -148,6 +186,5 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
 
 fn main() {
     let args = Args::parse();
-
     assign_posterior_probabilities(&args);
 }
