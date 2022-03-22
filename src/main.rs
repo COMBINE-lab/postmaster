@@ -64,7 +64,6 @@ fn process_alignment_group(alns: &mut Vec<Record>, quants: &Vec<QuantRecord>, wr
     }
 
     assert!(tot_tpm > 0.0);
-
     let norm: f64 = 1.0 / tot_tpm;
     // now iterate over the records again, this time
     // computing the posterior probability and writing it
