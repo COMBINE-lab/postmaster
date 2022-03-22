@@ -2,7 +2,11 @@ use anyhow::anyhow;
 use anyhow::{Context, Result};
 use clap::Parser;
 use csv::ReaderBuilder;
-use rust_htslib::{bam, bam::record::Aux, bam::{Format, Read, Record, Writer}};
+use rust_htslib::{
+    bam,
+    bam::record::Aux,
+    bam::{Format, Read, Record, Writer},
+};
 use seine::salmon::QuantRecord;
 use std::cmp;
 use std::fs::File;
@@ -168,7 +172,7 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
                     // read name, then we are starting to process the alignments
                     // for a new read.
                     if &curr_qname[..] != record.qname() {
-                        let prev_name = String::from_utf8(curr_qname).unwrap();
+                        let _prev_name = String::from_utf8(curr_qname).unwrap();
                         curr_qname = record.qname().to_vec();
                         // if this wasn't the first read then
                         // process the alignments for the previous
