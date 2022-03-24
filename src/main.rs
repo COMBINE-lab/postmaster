@@ -52,7 +52,7 @@ fn read_quants<P: AsRef<Path>>(p: P) -> Result<Vec<QuantRecord>, csv::Error> {
 /// posterior assignment probability for each of the alignments in `alns`, it will populate
 /// the "ZW" field of the corresponding SAM/BAM record with this posterior probability estimate
 /// and it will write the resulting (annotated) alignment records using `writer`.
-fn process_alignment_group(alns: &mut Vec<Record>, quants: &Vec<QuantRecord>, writer: &mut Writer) {
+fn process_alignment_group(alns: &mut Vec<Record>, quants: &[QuantRecord], writer: &mut Writer) {
     // tot_tpm will hold the denominator that we will
     // divide by to properly normalize the posterior probabilities
     let mut tot_tpm = 0.0;
@@ -73,14 +73,14 @@ fn process_alignment_group(alns: &mut Vec<Record>, quants: &Vec<QuantRecord>, wr
     // now iterate over the records again, this time
     // computing the posterior probability and writing it
     // to the ZW tag.
-    let mut a_mit = alns.iter_mut();
-    while let Some(a) = a_mit.next() {
+    let a_mit = alns.iter_mut();
+    for a in a_mit {
         let tid = a.tid() as usize;
         let pp = quants[tid].tpm * norm;
-        if let Ok(mut value) = a.aux(b"ZW") {
-            value = Aux::Float(pp as f32);
+        if let Ok(mut _value) = a.aux(b"ZW") {
+            _value = Aux::Float(pp as f32);
         } else {
-            a.push_aux(b"ZW", Aux::Float(pp as f32));
+            a.push_aux(b"ZW", Aux::Float(pp as f32)).unwrap();
         }
         writer.write(a);
     }
@@ -100,7 +100,7 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
     // open the input alignment file and set the number of reading threads
     let mut bam: bam::Reader = match &args.alignments {
         None => bam::Reader::from_stdin()
-            .with_context(|| format!("failed to open SAM/BAM from STDIN"))?,
+            .with_context(|| "failed to open SAM/BAM from STDIN".to_string())?,
         Some(aln_file) => bam::Reader::from_path(aln_file)
             .with_context(|| format!("failed to open SAM/BAM file {}", aln_file))?,
     };
@@ -141,8 +141,9 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
         // make sure the number of references in the sam/bam file
         // is equal to the number of quantified sequences
         // NOTE: what about decoys?
-        if (has_decoy_status && (ref_map.len() < nquant)) ||
-            (!has_decoy_status && (ref_map.len() != nquant)){
+        if (has_decoy_status && (ref_map.len() < nquant))
+            || (!has_decoy_status && (ref_map.len() != nquant))
+        {
             return Err(anyhow!(
                 "quant file had {} records, alignment file had {} refs",
                 nquant,
@@ -169,14 +170,13 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
         // for the decoys to avoid special cases later on.
         if has_decoy_status && (ref_map.len() > quant_vec.len()) {
             let st = quant_vec.len();
-            for i in st..ref_map.len() {
-                let r = &ref_map[i];
-                quant_vec.push(QuantRecord{
+            for r in ref_map.iter().skip(st) {
+                quant_vec.push(QuantRecord {
                     name: r["SN"].clone(),
                     len: 100,
                     efflen: 100.0,
                     tpm: 1.0,
-                    num_reads: 1.0
+                    num_reads: 1.0,
                 });
                 //println!("Added record {:#?}", quant_vec.last().unwrap() );
             }
@@ -228,7 +228,7 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
         }
         // since we don't hit the conditional at the top of the above loop, we need
         // one more call to deal with the alignments for the last read.
-        if rvec.len() > 0 {
+        if !rvec.is_empty() {
             process_alignment_group(&mut rvec, &quant_vec, &mut writer);
         }
     }
