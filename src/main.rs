@@ -61,7 +61,8 @@ fn process_alignment_group(alns: &mut Vec<Record>, quants: &Vec<QuantRecord>, wr
 
     // get the TPM for all records for this read
     while let Some(a) = ait.next() {
-        tot_tpm += quants[a.tid() as usize].tpm;
+        let tid = a.tid() as usize;
+        tot_tpm += quants[tid].tpm;
         if a.is_paired() {
             ait.next();
         }
@@ -74,7 +75,8 @@ fn process_alignment_group(alns: &mut Vec<Record>, quants: &Vec<QuantRecord>, wr
     // to the ZW tag.
     let mut a_mit = alns.iter_mut();
     while let Some(a) = a_mit.next() {
-        let pp = quants[a.tid() as usize].tpm * norm;
+        let tid = a.tid() as usize;
+        let pp = quants[tid].tpm * norm;
         if let Ok(mut value) = a.aux(b"ZW") {
             value = Aux::Float(pp as f32);
         } else {
@@ -130,15 +132,17 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
     writer.set_threads(write_threads);
 
     // read the input from the salmon quant.sf file
-    if let Ok(quant_vec) = read_quants(&args.quant) {
+    if let Ok(mut quant_vec) = read_quants(&args.quant) {
         let hhm = header.to_hashmap();
         let nquant = quant_vec.len();
         // get the map of reference info
         let ref_map = &hhm["SQ"];
+        let has_decoy_status = ref_map.first().map_or(false, |v| v.contains_key("DS"));
         // make sure the number of references in the sam/bam file
         // is equal to the number of quantified sequences
         // NOTE: what about decoys?
-        if ref_map.len() != nquant {
+        if (has_decoy_status && (ref_map.len() < nquant)) ||
+            (!has_decoy_status && (ref_map.len() != nquant)){
             return Err(anyhow!(
                 "quant file had {} records, alignment file had {} refs",
                 nquant,
@@ -152,6 +156,30 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
         for (i, e) in quant_vec.iter().enumerate() {
             let r = &ref_map[i];
             assert_eq!(&e.name, &r["SN"]);
+            // every entry from the quant file should have a "T" (target)
+            // decoy status. Further, these should be the first
+            // quant_vec.size() entries in the header.
+            if has_decoy_status {
+                assert_eq!(&r["DS"], "T");
+            }
+        }
+
+        // if we have decoys, they should come after all of the "valid"
+        // targets.  In this case, we pad our quant_vec with dummy entries
+        // for the decoys to avoid special cases later on.
+        if has_decoy_status && (ref_map.len() > quant_vec.len()) {
+            let st = quant_vec.len();
+            for i in st..ref_map.len() {
+                let r = &ref_map[i];
+                quant_vec.push(QuantRecord{
+                    name: r["SN"].clone(),
+                    len: 100,
+                    efflen: 100.0,
+                    tpm: 1.0,
+                    num_reads: 1.0
+                });
+                //println!("Added record {:#?}", quant_vec.last().unwrap() );
+            }
         }
 
         // Now, we'll process the actual records.
