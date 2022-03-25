@@ -52,7 +52,11 @@ fn read_quants<P: AsRef<Path>>(p: P) -> Result<Vec<QuantRecord>, csv::Error> {
 /// posterior assignment probability for each of the alignments in `alns`, it will populate
 /// the "ZW" field of the corresponding SAM/BAM record with this posterior probability estimate
 /// and it will write the resulting (annotated) alignment records using `writer`.
-fn process_alignment_group(alns: &mut Vec<Record>, quants: &[QuantRecord], writer: &mut Writer) -> Result<()> {
+fn process_alignment_group(
+    alns: &mut Vec<Record>,
+    quants: &[QuantRecord],
+    writer: &mut Writer,
+) -> Result<()> {
     // tot_tpm will hold the denominator that we will
     // divide by to properly normalize the posterior probabilities
     let mut tot_tpm = 0.0;
