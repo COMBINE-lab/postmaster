@@ -48,11 +48,18 @@ fn read_quants<P: AsRef<Path>>(p: P) -> Result<Vec<QuantRecord>, csv::Error> {
     Ok(quant_vec)
 }
 
+struct PostStats {
+    pub total_reads : usize,
+    pub impossible_reads : usize,
+}
+
 /// Using the quantification values present in `quants`, this function will compute a
 /// posterior assignment probability for each of the alignments in `alns`, it will populate
 /// the "ZW" field of the corresponding SAM/BAM record with this posterior probability estimate
 /// and it will write the resulting (annotated) alignment records using `writer`.
-fn process_alignment_group(alns: &mut Vec<Record>, quants: &Vec<QuantRecord>, writer: &mut Writer) {
+fn process_alignment_group(alns: &mut Vec<Record>, quants: &Vec<QuantRecord>, writer: &mut Writer) -> 
+    bool {
+
     // tot_tpm will hold the denominator that we will
     // divide by to properly normalize the posterior probabilities
     let mut tot_tpm = 0.0;
@@ -68,7 +75,9 @@ fn process_alignment_group(alns: &mut Vec<Record>, quants: &Vec<QuantRecord>, wr
         }
     }
 
-    assert!(tot_tpm > 0.0);
+    if !(tot_tpm > 0.0) {
+        return false;
+    }
     let norm: f64 = 1.0 / tot_tpm;
     // now iterate over the records again, this time
     // computing the posterior probability and writing it
@@ -84,9 +93,12 @@ fn process_alignment_group(alns: &mut Vec<Record>, quants: &Vec<QuantRecord>, wr
         }
         writer.write(a);
     }
+    true
 }
 
-fn assign_posterior_probabilities(args: &Args) -> Result<()> {
+fn assign_posterior_probabilities(args: &Args) -> Result<PostStats> {
+
+    let mut ps = PostStats{ total_reads: 0usize, impossible_reads: 0usize };
     // we will require to have at least 2 reading threads
     // and at least 1 writing thread.
     let read_threads: usize = cmp::max(2usize, &args.num_threads / 2);
@@ -206,7 +218,9 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
                         // process the alignments for the previous
                         // read.
                         if !first {
-                            process_alignment_group(&mut rvec, &quant_vec, &mut writer);
+                            let valid = process_alignment_group(&mut rvec, &quant_vec, &mut writer);
+                            if !valid { ps.impossible_reads += 1; }
+                            ps.total_reads += 1;
                             for rec in rvec.drain(..) {
                                 rcache.push(rec);
                             }
@@ -229,13 +243,22 @@ fn assign_posterior_probabilities(args: &Args) -> Result<()> {
         // since we don't hit the conditional at the top of the above loop, we need
         // one more call to deal with the alignments for the last read.
         if rvec.len() > 0 {
-            process_alignment_group(&mut rvec, &quant_vec, &mut writer);
+            let valid = process_alignment_group(&mut rvec, &quant_vec, &mut writer);
+            if !valid { ps.impossible_reads += 1; }
+            ps.total_reads += 1;
         }
     }
-    Ok(())
+    Ok(ps)
 }
 
 fn main() {
     let args = Args::parse();
-    assign_posterior_probabilities(&args);
+    if let Ok(ps) = assign_posterior_probabilities(&args) {
+        if ps.total_reads > 0 {
+            eprintln!("Processed {} total reads; {} of them had no assignable transcript", 
+                      ps.total_reads, ps.impossible_reads);
+        } else {
+            eprintln!("Processed 0 total reads!");
+        }
+    }
 }
