@@ -9,6 +9,7 @@ use rust_htslib::{
 };
 use seine::salmon::QuantRecord;
 use std::cmp;
+use std::cmp::Ordering;
 use std::fs::File;
 use std::path::Path;
 use std::vec::Vec;
@@ -77,9 +78,12 @@ fn process_alignment_group(
         }
     }
 
-    if !(tot_tpm > 0.0) {
-        return Ok(false);
-    }
+    match tot_tpm.partial_cmp(&0.0) {
+        None | Some(Ordering::Less) | Some(Ordering::Equal) => {
+            return Ok(false);
+        }
+        _ => {}
+    };
     let norm: f64 = 1.0 / tot_tpm;
     // now iterate over the records again, this time
     // computing the posterior probability and writing it
